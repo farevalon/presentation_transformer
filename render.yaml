@@ -1,0 +1,6 @@
+services:
+  - type: web
+    runtime: static
+    name: transformer-presentation
+    buildCommand: echo "No build step needed"
+    staticPublishPath: ./

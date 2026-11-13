@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How transformers read</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDF0F4; --panel:#FFFFFF; --ink:#18202E; --muted:#566073; --line:#CBD2DD;
+  --accent:#3A3EB4; --hot:#BE2F72; --on-accent:#FFFFFF;
+  --serif:"Newsreader", Georgia, "Times New Roman", serif;
+  --sans:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10151F; --panel:#182030; --ink:#E5E9F1; --muted:#9AA3B5; --line:#2C3547;
+    --accent:#8D91FF; --hot:#FF6FA9; --on-accent:#0E1220; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10151F; --panel:#182030; --ink:#E5E9F1; --muted:#9AA3B5; --line:#2C3547;
+  --accent:#8D91FF; --hot:#FF6FA9; --on-accent:#0E1220; color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{height:100%; scroll-padding-top:env(safe-area-inset-top,0px)}
+body{height:100%; margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans); -webkit-font-smoothing:antialiased}
+.deck{height:100%; display:flex; flex-direction:column}
+.stage{flex:1; position:relative; overflow:hidden}
+.slide{position:absolute; inset:0; overflow-y:auto; overflow-x:hidden; padding:clamp(20px,4vw,56px) clamp(18px,4vw,56px); display:none}
+.slide.active{display:block}
+.inner{max-width:1200px; min-height:100%; margin:0 auto; display:grid; grid-template-columns:minmax(0,5fr) minmax(0,7fr); gap:clamp(24px,4vw,64px); align-content:center; align-items:start}
+@media (max-width:880px){.inner{grid-template-columns:minmax(0,1fr)}}
+h1,h2{font-family:var(--serif); font-weight:500; letter-spacing:-0.01em; margin:0}
+h2{font-size:clamp(30px,3.9vw,50px); line-height:1.06; margin-bottom:20px; text-wrap:balance}
+h3{font-size:15px; font-weight:600; margin:0 0 10px}
+p{font-size:clamp(15px,1.2vw,17px); line-height:1.6; max-width:60ch; margin:0 0 14px}
+.muted{color:var(--muted)}
+.small{font-size:14px}
+sub,sup{font-size:.7em}
+a{color:var(--accent)}
+.formula{font-family:var(--serif); font-size:clamp(18px,1.6vw,22px); line-height:1.6; margin:4px 0 18px}
+.demo{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:clamp(16px,2.2vw,28px); min-width:0}
+.row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+.btn{font:inherit; font-size:14px; border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:999px; padding:8px 16px; cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent); color:var(--on-accent); border-color:transparent}
+.btn[aria-pressed="true"]{background:var(--ink); color:var(--paper); border-color:transparent}
+.btn:disabled{opacity:.4; cursor:default}
+:focus-visible{outline:2px solid var(--hot); outline-offset:2px}
+label{font-size:14px; color:var(--muted); display:block; margin-bottom:6px}
+input[type=range]{width:100%; accent-color:var(--accent)}
+input[type=text]{width:100%; font:inherit; font-size:16px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--paper); color:var(--ink)}
+.control{margin:14px 0}
+.control output{font-variant-numeric:tabular-nums; color:var(--ink); font-weight:500}
+
+/* footer navigation */
+footer{display:flex; align-items:center; gap:clamp(8px,2vw,16px); padding:10px clamp(12px,3vw,32px); border-top:1px solid var(--line); background:var(--paper)}
+#progress{flex:1; display:flex; gap:4px; min-width:0}
+.seg{flex:1; height:24px; border:0; padding:0; cursor:pointer; background:linear-gradient(var(--line),var(--line)) center/100% 4px no-repeat; border-radius:2px}
+.seg.done{background-image:linear-gradient(var(--accent),var(--accent))}
+#counter{font-size:14px; color:var(--muted); font-variant-numeric:tabular-nums; min-width:4.5em; text-align:center}
+
+/* slide 1 */
+.hero-inner{max-width:1120px; min-height:100%; margin:0 auto; display:flex; flex-direction:column; justify-content:center}
+.hero h1{font-size:clamp(22px,2.4vw,30px); color:var(--muted)}
+.sentence{display:flex; flex-wrap:wrap; gap:.18em .12em; margin:clamp(20px,4vh,40px) 0 clamp(16px,3vh,28px); font-size:clamp(28px,5.4vw,70px)}
+.htok{font:inherit; font-family:var(--serif); line-height:1.08; border:0; border-radius:12px; padding:.06em .2em .04em; display:inline-flex; flex-direction:column; align-items:center; cursor:pointer; color:var(--ink); background:var(--panel); transition:background-color .25s, color .25s}
+.htok .pct{font-family:var(--sans); font-size:13px; opacity:.75; font-variant-numeric:tabular-nums; padding-bottom:4px}
+.htok.sel{box-shadow:inset 0 0 0 2px var(--hot)}
+.hero-caption{font-family:var(--serif); font-size:clamp(19px,1.9vw,26px); line-height:1.4; max-width:44ch}
+
+/* slide 2 */
+.chain{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px}
+.node{padding:6px 10px; border-radius:8px; border:1px solid var(--line); font-size:15px; transition:background-color .2s}
+.node.lit{background:color-mix(in srgb, var(--accent) 22%, var(--panel))}
+.node.hot{background:var(--hot); color:var(--panel); border-color:transparent}
+.node.next{border-style:dashed; color:var(--muted)}
+.arr{color:var(--muted); font-size:13px}
+.stat{font-size:14px; color:var(--muted); min-height:2.6em; margin-bottom:18px}
+
+/* slide 3 */
+.tokrows{margin-top:16px; display:flex; flex-direction:column; gap:6px; max-height:46vh; overflow-y:auto}
+.tokrow{display:grid; grid-template-columns:minmax(80px,1fr) 64px minmax(0,2.2fr); gap:10px; align-items:center; font-size:14px}
+.tokhead{color:var(--muted); font-size:13px}
+.chip{background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:3px 8px; justify-self:start; white-space:pre}
+.tid{font-variant-numeric:tabular-nums; color:var(--muted); text-align:right}
+.vec{display:grid; grid-template-columns:repeat(16,1fr); gap:2px}
+.vec .cell{height:20px; border-radius:3px}
+
+/* slide 4 */
+.pe-wrap{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; align-items:start}
+@media (max-width:620px){.pe-wrap{grid-template-columns:minmax(0,1fr)}}
+#peCanvas{width:100%; aspect-ratio:1; display:block; border-radius:6px}
+.axis{font-size:12px; color:var(--muted); margin-top:6px}
+svg text{font-family:var(--sans)}
+
+/* slide 5 */
+.qkv{display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:20px; align-items:start}
+@media (max-width:620px){.qkv{grid-template-columns:minmax(0,1fr)}}
+#qkvSvg{width:100%; aspect-ratio:1; touch-action:none; cursor:crosshair; display:block}
+#qPoint{cursor:grab}
+.bars{display:flex; flex-direction:column; gap:8px}
+.bar{display:grid; grid-template-columns:70px minmax(0,1fr) 46px; gap:8px; align-items:center; font-size:14px}
+.bar .track{height:14px; background:var(--paper); border-radius:7px; overflow:hidden}
+.bar .fill{height:100%; border-radius:7px}
+.bar .v{text-align:right; font-variant-numeric:tabular-nums}
+.swatch{width:100%; height:44px; border-radius:10px; margin:8px 0 4px; border:1px solid var(--line)}
+
+/* slide 6 */
+.steps{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px}
+.steps .btn{padding:6px 12px; font-size:13px}
+.formula span{border-radius:6px; padding:0 .12em; transition:background-color .2s}
+.formula span.on{background:color-mix(in srgb, var(--hot) 22%, transparent)}
+.mats{display:flex; flex-wrap:wrap; gap:18px; overflow-x:auto; padding-bottom:4px}
+.mat{margin:0}
+.mat figcaption{font-size:13px; color:var(--muted); margin-bottom:6px}
+.mat table{border-collapse:separate; border-spacing:3px; font-variant-numeric:tabular-nums; font-size:13px}
+.mat td{min-width:48px; padding:7px 4px; text-align:center; border-radius:5px}
+.mat th{font-weight:500; color:var(--muted); font-size:12px; padding:2px 6px}
+.neg-inf{background:repeating-linear-gradient(45deg, var(--line) 0 4px, transparent 4px 8px); color:var(--muted)}
+.check{display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink); margin:0}
+#stepText{min-height:5em}
+
+/* slide 7 */
+.heads{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px}
+.heads .btn{font-size:13px; padding:6px 12px}
+.attn-grid{overflow-x:auto}
+.attn-grid table{border-collapse:separate; border-spacing:2px; font-size:13px}
+.attn-grid td{width:34px; height:34px; border-radius:4px}
+.attn-grid th{font-weight:400; color:var(--muted); padding:2px 6px}
+.attn-grid thead th{writing-mode:vertical-rl; transform:rotate(180deg); text-align:left; height:64px; padding:6px 0}
+.attn-grid tbody th{text-align:right}
+.attn-grid td.hl, .attn-grid th.hl{outline:2px solid var(--hot); outline-offset:-1px}
+#mhRead{font-size:14px; min-height:3em; margin-top:12px}
+
+/* slide 8 */
+.block-wrap{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:22px; align-items:start}
+@media (max-width:620px){.block-wrap{grid-template-columns:minmax(0,1fr)}}
+.diagram{display:flex; flex-direction:column; gap:4px}
+.part{font:inherit; font-size:14px; text-align:left; padding:10px 14px; border-radius:10px; border:1px solid var(--line); background:var(--paper); color:var(--ink); cursor:pointer}
+.part:hover{border-color:var(--accent)}
+.part.norm{font-size:13px; padding:6px 14px; color:var(--muted)}
+.part[aria-pressed="true"]{background:var(--accent); color:var(--on-accent); border-color:transparent}
+.flow{text-align:center; color:var(--muted); font-size:12px; line-height:1}
+.group{border:1.5px dashed var(--muted); border-radius:14px; padding:10px; display:flex; flex-direction:column; gap:4px}
+.group .stack{align-self:flex-end; padding:4px 10px; font-size:13px; border-radius:999px}
+.detail h3{font-family:var(--serif); font-weight:500; font-size:24px; margin-bottom:10px}
+.detail p{font-size:15px}
+
+/* slide 9 */
+.fam-grids{display:flex; flex-wrap:wrap; gap:22px; margin:18px 0}
+.mask-fig{margin:0}
+.mask-fig figcaption{font-size:13px; color:var(--muted); margin-top:8px; max-width:16ch}
+.mask{display:grid; grid-template-columns:repeat(6,20px); gap:3px}
+.mask span{width:20px; height:20px; border-radius:4px; background:var(--line)}
+.mask span.on{background:var(--accent)}
+.legend{display:flex; gap:16px; font-size:13px; color:var(--muted); align-items:center}
+.legend i{display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px}
+
+/* slide 10 */
+.metric{margin:18px 0}
+.metric .lab{font-size:14px; color:var(--muted)}
+.metric .num{font-family:var(--serif); font-size:clamp(26px,3vw,38px); line-height:1.15; font-variant-numeric:tabular-nums}
+.meter{height:10px; background:var(--paper); border-radius:5px; overflow:hidden; margin-top:6px}
+.meter div{height:100%; background:var(--accent); border-radius:5px; transition:width .25s}
+.meter div.over{background:var(--hot)}
+.note{font-size:13px; color:var(--muted); margin-top:4px; min-height:1.3em}
+
+/* slide 11 */
+.prompt{font-family:var(--serif); font-size:clamp(22px,2.4vw,30px); margin:0 0 14px}
+.prompt mark{background:color-mix(in srgb, var(--hot) 20%, transparent); color:var(--ink); border-radius:6px; padding:0 .2em}
+.bar.samp{grid-template-columns:96px minmax(0,1fr) 46px 40px}
+.bar .cnt{text-align:right; color:var(--muted); font-variant-numeric:tabular-nums}
+.bar.off{opacity:.35}
+
+/* slide 12 */
+.takeaways{margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:16px}
+.takeaways li{font-family:var(--serif); font-size:clamp(19px,1.7vw,23px); line-height:1.4; padding-left:18px; border-left:3px solid var(--accent); max-width:46ch}
+.reading{margin:0; padding-left:18px}
+.reading li{margin-bottom:10px; line-height:1.5; font-size:15px}
+
+@media (prefers-reduced-motion: reduce){*{transition:none !important; animation:none !important}}
+</style>
+</head>
+<body>
+<div class="deck">
+<main class="stage">
+
+<!-- 1 -->
+<section class="slide hero" id="s1" data-title="How transformers read" aria-label="Slide 1: How transformers read">
+  <div class="hero-inner">
+    <h1>How transformers read</h1>
+    <div class="sentence" id="heroSentence" role="group" aria-label="Pick a word to see its attention"></div>
+    <p class="hero-caption" id="heroCaption"></p>
+    <p class="muted small">Pick any word to see where it looks. The weights are illustrative, in the style of one head of a trained model. Use the arrow keys or the bar below to move through the deck.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="slide" id="s2" data-title="Why attention" aria-label="Slide 2: Why attention">
+  <div class="inner">
+    <div>
+      <h2>Recurrence reads one word at a time. Attention reads them all at once.</h2>
+      <p>An RNN folds everything it has seen into one hidden state and hands it forward, step after step. Information from “France” has to survive four updates before it can help predict “French”, and none of those steps can run in parallel.</p>
+      <p>Self-attention connects every position to every other position directly. Any two tokens are one hop apart, and the whole sequence is processed with a few large matrix multiplies, which is what made training on GPUs at scale practical.</p>
+    </div>
+    <div class="demo">
+      <h3>Recurrent network</h3>
+      <div class="chain" id="rnnChain"></div>
+      <p class="stat" id="rnnStat">Sequential steps: 0</p>
+      <h3>Self-attention</h3>
+      <div class="chain" id="attChain"></div>
+      <p class="stat" id="attStat">Sequential steps: 0</p>
+      <div class="row"><button class="btn primary" id="raceBtn" type="button">Process the sentence</button><button class="btn" id="raceReset" type="button">Reset</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="slide" id="s3" data-title="Tokens and embeddings" aria-label="Slide 3: Tokens and embeddings">
+  <div class="inner">
+    <div>
+      <h2>Text becomes tokens, tokens become vectors</h2>
+      <p>A tokenizer splits text into subword pieces from a fixed vocabulary (GPT‑2’s has 50,257 entries). Each piece maps to an integer ID, and each ID picks out one row of a learned embedding matrix.</p>
+      <p>That row is the model’s starting point for the token: a vector of d<sub>model</sub> numbers, typically 768 to 12,288 of them. Here each vector is cut to its first 16 values, colored by sign and size.</p>
+      <p class="muted small">This tokenizer is a toy that chops long words into fixed-size chunks. Real tokenizers (BPE, WordPiece, SentencePiece) learn their pieces from data, and these embedding values are random stand-ins.</p>
+    </div>
+    <div class="demo">
+      <label for="tokInput">Type a sentence</label>
+      <input type="text" id="tokInput" value="Transformers learn surprisingly general patterns." autocomplete="off" spellcheck="false">
+      <div class="tokrows" id="tokOut" aria-live="polite"></div>
+      <div class="legend" style="margin-top:14px"><span><i style="background:var(--accent)"></i>positive</span><span><i style="background:var(--hot)"></i>negative</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="slide" id="s4" data-title="Positional encoding" aria-label="Slide 4: Positional encoding">
+  <div class="inner">
+    <div>
+      <h2>Attention has no sense of order, so position is added in</h2>
+      <p>Self-attention treats its input as a set: shuffle the tokens and the outputs simply shuffle with them. To give the model word order, the original transformer adds a fixed sinusoidal vector to each embedding.</p>
+      <p class="formula">PE(pos, 2i) = sin(pos / 10000<sup>2i/d</sup>)<br>PE(pos, 2i+1) = cos(pos / 10000<sup>2i/d</sup>)</p>
+      <p>Low dimensions oscillate fast and high dimensions slowly, like the hands of a clock. The dot product of two encodings depends mostly on how far apart they are, so relative position is easy to read off. Most recent LLMs use rotary embeddings (RoPE), which apply the same idea as a rotation of queries and keys.</p>
+    </div>
+    <div class="demo">
+      <div class="pe-wrap">
+        <div>
+          <canvas id="peCanvas" role="img" aria-label="Heatmap of sinusoidal positional encodings, 64 positions by 64 dimensions"></canvas>
+          <p class="axis">Rows are positions 0 to 63, columns are dimensions 0 to 63.</p>
+        </div>
+        <div>
+          <div class="control" style="margin-top:0">
+            <label for="peSlider">Position <output id="peOut">12</output></label>
+            <input type="range" id="peSlider" min="0" max="63" value="12">
+          </div>
+          <svg id="peSim" viewBox="0 0 320 150" role="img" aria-label="Similarity of the selected position to every other position" style="width:100%;display:block"></svg>
+          <p class="axis" id="peRead"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section class="slide" id="s5" data-title="Queries, keys and values" aria-label="Slide 5: Queries, keys and values">
+  <div class="inner">
+    <div>
+      <h2>Queries, keys and values: a lookup you can train</h2>
+      <p>Each token is projected three ways. Its query says what it’s looking for, its key says what it offers, and its value is what it hands over if chosen.</p>
+      <p>A Python dictionary returns the one value whose key matches exactly. Attention scores the query against every key, turns the scores into weights with softmax, and returns a weighted blend of all the values. Because every step is smooth, gradients flow through it and the projections can be learned.</p>
+      <p>Drag the query. Raise the sharpness and the soft lookup starts to behave like a hard one.</p>
+    </div>
+    <div class="demo">
+      <div class="qkv">
+        <svg id="qkvSvg" viewBox="-1.6 -1.6 3.2 3.2" role="img" aria-label="Drag the query point; lines show attention weights to four keys"></svg>
+        <div>
+          <h3>Attention weights</h3>
+          <div class="bars" id="qkvBars"></div>
+          <h3 style="margin-top:18px">Returned value</h3>
+          <div class="swatch" id="qkvOut"></div>
+          <p class="small muted" id="qkvRead"></p>
+          <div class="control">
+            <label for="sharp">Sharpness <output id="sharpOut">3.0</output></label>
+            <input type="range" id="sharp" min="0.5" max="12" step="0.5" value="3">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="slide" id="s6" data-title="Scaled dot-product attention" aria-label="Slide 6: Scaled dot-product attention">
+  <div class="inner">
+    <div>
+      <h2>Scaled dot-product attention, step by step</h2>
+      <p class="formula" id="formula" aria-label="Attention of Q, K, V equals softmax of Q K transpose over root d k plus M, times V">Attention(Q, K, V) = <span data-st="4">softmax(</span><span data-st="1">QKᵀ</span> <span data-st="2">/ √d<sub>k</sub></span> <span data-st="3">+ M</span><span data-st="4">)</span> <span data-st="5">V</span></p>
+      <p id="stepText"></p>
+      <label class="check"><input type="checkbox" id="causal"> Causal mask (decoder)</label>
+    </div>
+    <div class="demo">
+      <div class="steps" id="steps" role="group" aria-label="Computation steps"></div>
+      <div class="mats" id="mats" aria-live="polite"></div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn" id="stepPrev" type="button">Previous step</button>
+        <button class="btn primary" id="stepNext" type="button">Next step</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="slide" id="s7" data-title="Multi-head attention" aria-label="Slide 7: Multi-head attention">
+  <div class="inner">
+    <div>
+      <h2>Many heads, each looking for something different</h2>
+      <p>Instead of one attention over full-width vectors, a layer runs h smaller heads in parallel, each with its own W<sub>Q</sub>, W<sub>K</sub> and W<sub>V</sub> of width d<sub>model</sub> / h. Their outputs are concatenated and mixed back together by W<sub>O</sub>.</p>
+      <p>Trained heads often specialize. Some track the previous token, some link verbs to their subjects, some spread out to gather broad context. These patterns are hand-built to show the idea; real heads are messier and harder to name.</p>
+    </div>
+    <div class="demo">
+      <div class="heads" id="heads" role="group" aria-label="Choose a head"></div>
+      <div class="attn-grid" id="mhGrid"></div>
+      <p id="mhRead" class="muted"></p>
+    </div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="slide" id="s8" data-title="The transformer block" aria-label="Slide 8: The transformer block">
+  <div class="inner">
+    <div>
+      <h2>The transformer block</h2>
+      <p>A model is a stack of identical blocks. In each one, tokens first exchange information through attention, then every token is processed on its own by a small MLP. Residual connections and normalization keep a deep stack trainable.</p>
+      <p>Select a part of the diagram to see what it does. Data flows from the bottom up.</p>
+    </div>
+    <div class="demo">
+      <div class="block-wrap">
+        <div class="diagram" id="diagram">
+          <button class="part" data-part="out" type="button">Linear + softmax</button>
+          <div class="flow" aria-hidden="true">↑</div>
+          <div class="group">
+            <button class="part stack btn" data-part="stack" type="button">× N layers</button>
+            <button class="part norm" data-part="norm2" type="button">Add &amp; norm</button>
+            <button class="part" data-part="ffn" type="button">Feed-forward network</button>
+            <div class="flow" aria-hidden="true">↑</div>
+            <button class="part norm" data-part="norm1" type="button">Add &amp; norm</button>
+            <button class="part" data-part="attn" type="button">Multi-head self-attention</button>
+          </div>
+          <div class="flow" aria-hidden="true">↑</div>
+          <button class="part" data-part="pos" type="button">+ Positional information</button>
+          <div class="flow" aria-hidden="true">↑</div>
+          <button class="part" data-part="embed" type="button">Token embedding</button>
+        </div>
+        <div class="detail" id="detail" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="slide" id="s9" data-title="Three families" aria-label="Slide 9: Three families">
+  <div class="inner">
+    <div>
+      <h2>One mechanism, three families</h2>
+      <p>The same block becomes a different kind of model depending on which positions each token is allowed to see. That choice is made entirely by the attention mask.</p>
+      <p>Each grid shows six query positions (rows) and the keys they may attend to (columns).</p>
+      <div class="legend"><span><i style="background:var(--accent)"></i>can attend</span><span><i style="background:var(--line)"></i>masked</span></div>
+    </div>
+    <div class="demo">
+      <div class="heads" id="famTabs" role="group" aria-label="Choose a model family"></div>
+      <div class="fam-grids" id="famGrids"></div>
+      <div id="famText"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="slide" id="s10" data-title="The cost of attention" aria-label="Slide 10: The cost of attention">
+  <div class="inner">
+    <div>
+      <h2>The catch: attention grows with the square of the length</h2>
+      <p>The score matrix has one entry for every pair of tokens. Double the context and that matrix gets four times bigger, while the rest of the block only doubles.</p>
+      <p>Real systems work around this. FlashAttention computes attention in tiles without ever storing the full matrix, the KV cache avoids recomputing keys and values during generation, and grouped-query attention, sliding windows and sparse patterns cut the cost further.</p>
+      <p class="muted small">Shapes approximate a 7-billion-parameter model such as Llama 2 7B: 32 layers, 32 heads, d<sub>model</sub> = 4,096, 16-bit numbers. Bars compare against one 80 GB GPU.</p>
+    </div>
+    <div class="demo">
+      <div class="control" style="margin-top:0">
+        <label for="lenSlider">Context length <output id="lenOut"></output></label>
+        <input type="range" id="lenSlider" min="9" max="17" step="1" value="12">
+      </div>
+      <div class="metric">
+        <div class="lab">Score matrix for one layer, if stored in full</div>
+        <div class="num" id="mScore"></div>
+        <div class="meter"><div id="bScore"></div></div>
+        <div class="note" id="nScore"></div>
+      </div>
+      <div class="metric">
+        <div class="lab">KV cache for the whole model during generation</div>
+        <div class="num" id="mKV"></div>
+        <div class="meter"><div id="bKV"></div></div>
+        <div class="note" id="nKV"></div>
+      </div>
+      <div class="metric">
+        <div class="lab">Share of forward-pass compute spent on attention scores</div>
+        <div class="num" id="mFlop"></div>
+        <div class="meter"><div id="bFlop"></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="slide" id="s11" data-title="Generating text" aria-label="Slide 11: Generating text">
+  <div class="inner">
+    <div>
+      <h2>Generating text, one token at a time</h2>
+      <p>A decoder outputs a probability for every token in its vocabulary at the next position. Pick one, append it, run the model again. That loop is all generation is.</p>
+      <p>Temperature divides the logits before softmax: below 1 sharpens the distribution toward the top choice, above 1 flattens it. Top-k keeps only the k most likely tokens and renormalizes. Draw some samples and watch how often each word comes up.</p>
+    </div>
+    <div class="demo">
+      <p class="prompt">The cat sat on the <mark id="sampleWord">…</mark></p>
+      <div class="bars" id="sampBars"></div>
+      <div class="control">
+        <label for="temp">Temperature <output id="tempOut">1.00</output></label>
+        <input type="range" id="temp" min="0.1" max="2" step="0.05" value="1">
+      </div>
+      <div class="control">
+        <label for="topk">Top-k <output id="topkOut">8</output></label>
+        <input type="range" id="topk" min="1" max="8" step="1" value="8">
+      </div>
+      <div class="row">
+        <button class="btn primary" id="draw1" type="button">Draw 1 sample</button>
+        <button class="btn" id="draw100" type="button">Draw 100</button>
+        <button class="btn" id="drawClear" type="button">Clear counts</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="slide" id="s12" data-title="Takeaways" aria-label="Slide 12: Takeaways">
+  <div class="inner">
+    <div>
+      <h2>What to take away</h2>
+      <ul class="takeaways">
+        <li>Attention is a soft, learnable lookup: queries score keys, softmax turns scores into weights, and values are blended by those weights.</li>
+        <li>Every token reaches every other in one step, so training parallelizes well, at the price of cost that grows with the square of the length.</li>
+        <li>Order comes from positional information, and a causal mask turns the same machinery into a text generator.</li>
+        <li>A model is a stack of attention and MLP blocks joined by a residual stream.</li>
+      </ul>
+    </div>
+    <div class="demo">
+      <h3>Further reading</h3>
+      <ul class="reading">
+        <li>Vaswani et al., <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">“Attention Is All You Need”</a> (2017), the original paper.</li>
+        <li>Jay Alammar, <a href="https://jalammar.github.io/illustrated-transformer/" target="_blank" rel="noopener">“The Illustrated Transformer”</a>, a visual walkthrough of the same architecture.</li>
+        <li>Andrej Karpathy, <a href="https://github.com/karpathy/nanoGPT" target="_blank" rel="noopener">nanoGPT</a>, a small, readable GPT implementation to train yourself.</li>
+        <li>Elhage et al., <a href="https://transformer-circuits.pub/2021/framework/index.html" target="_blank" rel="noopener">“A Mathematical Framework for Transformer Circuits”</a> (2021), on reading attention heads and the residual stream.</li>
+        <li>Dao et al., <a href="https://arxiv.org/abs/2205.14135" target="_blank" rel="noopener">“FlashAttention”</a> (2022), on making exact attention fast and memory-light.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</main>
+<footer>
+  <button class="btn" id="prev" type="button" aria-label="Previous slide">Back</button>
+  <div id="progress" role="group" aria-label="Slides"></div>
+  <span id="counter" aria-live="polite"></span>
+  <button class="btn primary" id="next" type="button" aria-label="Next slide">Next</button>
+</footer>
+</div>
+
+<script>
+(() => {
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const heat = (w, v = 'accent') => `color-mix(in srgb, var(--${v}) ${Math.round(clamp(w, 0, 1) * 100)}%, var(--panel))`;
+const ink = w => (w > 0.55 ? 'var(--on-accent)' : 'var(--ink)');
+const softmax = a => {
+  const m = Math.max(...a.filter(Number.isFinite));
+  const e = a.map(x => (Number.isFinite(x) ? Math.exp(x - m) : 0));
+  const s = e.reduce((p, c) => p + c, 0);
+  return e.map(x => x / s);
+};
+const fmt = x => (!Number.isFinite(x) ? '−∞' : (Math.abs(x) < 0.005 ? 0 : x).toFixed(2).replace('-', '−'));
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const hex = h => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+const enter = {};
+
+/* ---------- navigation ---------- */
+const slides = $$('.slide');
+const N = slides.length;
+const progress = $('#progress');
+slides.forEach((s, i) => {
+  const b = document.createElement('button');
+  b.className = 'seg'; b.type = 'button';
+  b.setAttribute('aria-label', `Slide ${i + 1}: ${s.dataset.title}`);
+  b.addEventListener('click', () => go(i));
+  progress.appendChild(b);
+});
+let cur = -1;
+function go(i) {
+  i = clamp(i, 0, N - 1);
+  const changed = i !== cur;
+  cur = i;
+  slides.forEach((s, k) => { s.classList.toggle('active', k === cur); s.setAttribute('aria-hidden', k === cur ? 'false' : 'true'); });
+  $$('.seg').forEach((b, k) => { b.classList.toggle('done', k <= cur); if (k === cur) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
+  $('#counter').textContent = `${cur + 1} / ${N}`;
+  $('#prev').disabled = cur === 0;
+  $('#next').disabled = cur === N - 1;
+  if (location.hash.slice(1) !== slides[cur].id) location.hash = slides[cur].id;
+  if (changed) {
+    slides[cur].scrollTop = 0;
+    const fn = enter[slides[cur].id];
+    if (fn) requestAnimationFrame(fn);
+  }
+}
+function fromHash() { const i = slides.findIndex(s => s.id === location.hash.slice(1)); go(i >= 0 ? i : 0); }
+addEventListener('hashchange', fromHash);
+$('#prev').addEventListener('click', () => go(cur - 1));
+$('#next').addEventListener('click', () => go(cur + 1));
+addEventListener('keydown', e => {
+  const t = e.target;
+  if (t.closest && (t.closest('input, textarea, select, [contenteditable], [data-keys]'))) return;
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !t.closest('button'))) { e.preventDefault(); go(cur + 1); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(cur - 1); }
+  else if (e.key === 'Home') go(0);
+  else if (e.key === 'End') go(N - 1);
+});
+
+/* ---------- 1: hero sentence ---------- */
+const heroToks = ['The', 'animal', 'didn’t', 'cross', 'the', 'street', 'because', 'it', 'was', 'too', 'tired'];
+const special = {
+  0: { 1: .5 }, 1: { 0: .3, 3: .25 }, 2: { 3: .4, 1: .25 }, 3: { 5: .35, 1: .25 }, 4: { 5: .4 },
+  5: { 3: .35, 4: .25 }, 6: { 10: .3, 3: .2 }, 7: { 1: .62, 5: .12 }, 8: { 7: .4, 10: .3 },
+  9: { 10: .55 }, 10: { 1: .35, 7: .3 }
+};
+function heroWeights(q) {
+  const w = heroToks.map((_, j) => (j === q ? .14 : Math.abs(j - q) === 1 ? .07 : .02));
+  Object.entries(special[q] || {}).forEach(([j, v]) => { w[j] = v; });
+  const s = w.reduce((a, b) => a + b, 0);
+  return w.map(x => x / s);
+}
+const hs = $('#heroSentence');
+heroToks.forEach((t, i) => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'htok';
+  b.innerHTML = `<span class="w">${t}</span><span class="pct"></span>`;
+  b.addEventListener('click', () => setHero(i));
+  b.addEventListener('mouseenter', () => setHero(i));
+  b.addEventListener('focus', () => setHero(i));
+  hs.appendChild(b);
+});
+function setHero(q) {
+  const w = heroWeights(q), mx = Math.max(...w);
+  $$('.htok', hs).forEach((b, j) => {
+    const a = (w[j] / mx) * 0.9;
+    b.style.background = heat(a);
+    b.style.color = ink(a);
+    b.classList.toggle('sel', j === q);
+    b.setAttribute('aria-pressed', j === q ? 'true' : 'false');
+    b.querySelector('.pct').textContent = Math.round(w[j] * 100) + '%';
+  });
+  let top = -1;
+  w.forEach((x, j) => { if (j !== q && (top < 0 || x > w[top])) top = j; });
+  $('#heroCaption').textContent = `While reading “${heroToks[q]}”, this head puts ${Math.round(w[top] * 100)}% of its attention on “${heroToks[top]}”.`;
+}
+setHero(7);
+
+/* ---------- 2: RNN vs attention ---------- */
+const raceToks = ['I', 'grew', 'up', 'in', 'France', ',', 'so', 'I', 'speak'];
+function buildChain(el, arrows) {
+  el.innerHTML = raceToks.map((t, i) => `<span class="node">${t}</span>${arrows ? '<span class="arr" aria-hidden="true">→</span>' : ''}`).join('') + '<span class="node next">French?</span>';
+}
+buildChain($('#rnnChain'), true);
+buildChain($('#attChain'), false);
+let raceTimer = null;
+function resetRace() {
+  clearInterval(raceTimer); raceTimer = null;
+  $$('#rnnChain .node, #attChain .node').forEach(n => n.classList.remove('lit', 'hot'));
+  $('#rnnStat').textContent = 'Sequential steps: 0';
+  $('#attStat').textContent = 'Sequential steps: 0';
+}
+$('#raceReset').addEventListener('click', resetRace);
+$('#raceBtn').addEventListener('click', () => {
+  resetRace();
+  const att = $$('#attChain .node:not(.next)');
+  att.forEach(n => n.classList.add('lit'));
+  att[4].classList.add('hot'); att[8].classList.add('hot');
+  $('#attStat').textContent = 'Sequential steps: 1. “speak” reaches “France” directly, in one hop.';
+  const rn = $$('#rnnChain .node:not(.next)');
+  let i = 0;
+  const step = () => {
+    if (i >= rn.length) { clearInterval(raceTimer); return; }
+    rn[i].classList.add('lit');
+    if (i === 4 || i === 8) rn[i].classList.add('hot');
+    i++;
+    $('#rnnStat').textContent = `Sequential steps: ${i}` + (i === rn.length ? '. “France” passed through 4 hidden-state updates before reaching “speak”.' : '');
+  };
+  if (reduced) { while (i < rn.length) step(); }
+  else { step(); raceTimer = setInterval(step, 300); }
+});
+
+/* ---------- 3: tokenizer ---------- */
+const fnv = s => { let h = 2166136261; for (const c of s) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
+const rng = seed => () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+function tokenize(s) {
+  const words = s.match(/[\p{L}\p{N}’']+|[^\s\p{L}\p{N}]/gu) || [];
+  const out = [];
+  for (const w of words) {
+    if (w.length <= 6) out.push(w);
+    else { out.push(w.slice(0, 4)); for (let i = 4; i < w.length; i += 3) out.push('##' + w.slice(i, i + 3)); }
+  }
+  return out;
+}
+function renderTok() {
+  const all = tokenize($('#tokInput').value), toks = all.slice(0, 24);
+  const el = $('#tokOut');
+  if (!toks.length) { el.innerHTML = '<p class="muted small">Type something above to see its tokens.</p>'; return; }
+  el.innerHTML = `<div class="tokrow tokhead"><span>Token</span><span class="tid">ID</span><span>Embedding, first 16 values</span></div>` +
+    toks.map(t => {
+      const h = fnv(t), r = rng(h);
+      const cells = Array.from({ length: 16 }, () => r() * 2 - 1)
+        .map(v => `<span class="cell" style="background:${heat(Math.abs(v), v >= 0 ? 'accent' : 'hot')}" title="${v.toFixed(2)}"></span>`).join('');
+      return `<div class="tokrow"><span class="chip">${esc(t)}</span><span class="tid">${(h % 50257).toLocaleString('en-US')}</span><span class="vec">${cells}</span></div>`;
+    }).join('') +
+    `<p class="small muted" style="margin-top:8px">${all.length} token${all.length === 1 ? '' : 's'}${all.length > 24 ? ', first 24 shown' : ''}.</p>`;
+}
+$('#tokInput').addEventListener('input', renderTok);
+renderTok();
+
+/* ---------- 4: positional encoding ---------- */
+const P = 64, D = 64;
+const pe = Array.from({ length: P }, (_, p) => Array.from({ length: D }, (_, k) => {
+  const i = Math.floor(k / 2), a = p / Math.pow(10000, (2 * i) / D);
+  return k % 2 === 0 ? Math.sin(a) : Math.cos(a);
+}));
+function drawPE() {
+  const cv = $('#peCanvas'), sz = cv.clientWidth;
+  if (!sz) return;
+  const dpr = devicePixelRatio || 1, ctx = cv.getContext('2d');
+  cv.width = Math.round(sz * dpr); cv.height = Math.round(sz * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const pa = hex(css('--panel')), ac = hex(css('--accent')), ho = hex(css('--hot')), c = sz / P;
+  for (let p = 0; p < P; p++) for (let k = 0; k < D; k++) {
+    const v = pe[p][k], t = Math.abs(v), to = v >= 0 ? ac : ho;
+    ctx.fillStyle = `rgb(${pa.map((x, j) => Math.round(x + (to[j] - x) * t)).join(',')})`;
+    ctx.fillRect(k * c, p * c, c + 0.5, c + 0.5);
+  }
+  const pos = +$('#peSlider').value;
+  ctx.strokeStyle = css('--ink'); ctx.lineWidth = 2;
+  ctx.strokeRect(1, pos * c - 1, sz - 2, c + 2);
+  $('#peOut').textContent = pos;
+  const sim = pe.map(r => r.reduce((s, v, k) => s + v * pe[pos][k], 0) / (D / 2));
+  const X = j => 10 + j * (300 / (P - 1)), Y = v => 70 - v * 55;
+  const pts = sim.map((v, j) => `${X(j).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+  $('#peSim').innerHTML = `
+    <line x1="10" x2="310" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--line)" stroke-width="1"/>
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${X(pos)}" cy="${Y(1)}" r="4.5" fill="var(--hot)"/>
+    <text x="10" y="146" font-size="11" fill="var(--muted)">position 0</text>
+    <text x="310" y="146" font-size="11" fill="var(--muted)" text-anchor="end">63</text>
+    <text x="12" y="12" font-size="11" fill="var(--muted)">similarity to position ${pos}</text>`;
+  $('#peRead').textContent = `The curve peaks at position ${pos} and falls off with distance in both directions, the same shape wherever you put it.`;
+}
+$('#peSlider').addEventListener('input', drawPE);
+enter.s4 = drawPE;
+addEventListener('resize', () => { if (slides[cur] && slides[cur].id === 's4') drawPE(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawPE);
+new MutationObserver(drawPE).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+/* ---------- 5: Q, K, V lookup ---------- */
+const keys = [
+  { n: 'animal', a: 25, c: '#3A3EB4' }, { n: 'vehicle', a: 115, c: '#BE2F72' },
+  { n: 'food', a: 205, c: '#D99A00' }, { n: 'place', a: 295, c: '#1C9C86' }
+].map(k => ({ ...k, x: Math.cos(k.a * Math.PI / 180), y: Math.sin(k.a * Math.PI / 180) }));
+let q = { x: 0.7, y: 0.55 };
+const svg = $('#qkvSvg');
+svg.innerHTML = `
+  <circle cx="0" cy="0" r="1" fill="none" stroke="var(--line)" stroke-width=".012"/>
+  <line x1="-1.5" x2="1.5" y1="0" y2="0" stroke="var(--line)" stroke-width=".008"/>
+  <line y1="-1.5" y2="1.5" x1="0" x2="0" stroke="var(--line)" stroke-width=".008"/>
+  ${keys.map((k, i) => `<line id="ql${i}" stroke="${k.c}" stroke-linecap="round"/>`).join('')}
+  ${keys.map(k => `<circle cx="${k.x}" cy="${-k.y}" r=".09" fill="${k.c}"/>
+    <text x="${k.x * 1.3}" y="${-k.y * 1.3 + .05}" font-size=".15" text-anchor="middle" fill="var(--ink)">${k.n}</text>`).join('')}
+  <g id="qPoint" tabindex="0" data-keys role="slider" aria-label="Query position; use arrow keys to move">
+    <circle id="qc" r=".13" fill="var(--panel)" stroke="var(--ink)" stroke-width=".035"/>
+    <text id="qt" font-size=".14" text-anchor="middle" fill="var(--ink)" font-weight="600">query</text>
+  </g>`;
+function drawQKV() {
+  const sharp = +$('#sharp').value;
+  $('#sharpOut').textContent = sharp.toFixed(1);
+  const w = softmax(keys.map(k => (q.x * k.x + q.y * k.y) * sharp));
+  $('#qc').setAttribute('cx', q.x); $('#qc').setAttribute('cy', -q.y);
+  $('#qt').setAttribute('x', q.x); $('#qt').setAttribute('y', -q.y - .2);
+  keys.forEach((k, i) => {
+    const l = $('#ql' + i);
+    l.setAttribute('x1', q.x); l.setAttribute('y1', -q.y); l.setAttribute('x2', k.x); l.setAttribute('y2', -k.y);
+    l.setAttribute('stroke-width', (.008 + w[i] * .1).toFixed(3));
+    l.setAttribute('opacity', (.2 + .8 * w[i]).toFixed(2));
+  });
+  $('#qkvBars').innerHTML = keys.map((k, i) => `<div class="bar"><span>${k.n}</span><span class="track"><span class="fill" style="display:block;width:${(w[i] * 100).toFixed(1)}%;background:${k.c}"></span></span><span class="v">${Math.round(w[i] * 100)}%</span></div>`).join('');
+  const mix = [0, 1, 2].map(j => Math.round(keys.reduce((s, k, i) => s + hex(k.c)[j] * w[i], 0)));
+  $('#qkvOut').style.background = `rgb(${mix.join(',')})`;
+  const top = w.indexOf(Math.max(...w));
+  $('#qkvRead').textContent = w[top] > .9
+    ? `Almost a hard lookup: the result is nearly pure “${keys[top].n}”.`
+    : `A blend of all four values, led by “${keys[top].n}” at ${Math.round(w[top] * 100)}%.`;
+  $('#qPoint').setAttribute('aria-valuetext', `x ${q.x.toFixed(1)}, y ${q.y.toFixed(1)}; top match ${keys[top].n}`);
+}
+let dragging = false;
+function moveTo(e) {
+  const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  q = { x: clamp(p.x, -1.45, 1.45), y: clamp(-p.y, -1.45, 1.45) };
+  drawQKV();
+}
+svg.addEventListener('pointerdown', e => { dragging = true; svg.setPointerCapture(e.pointerId); moveTo(e); });
+svg.addEventListener('pointermove', e => { if (dragging) moveTo(e); });
+svg.addEventListener('pointerup', () => { dragging = false; });
+svg.addEventListener('pointercancel', () => { dragging = false; });
+$('#qPoint').addEventListener('keydown', e => {
+  const d = { ArrowLeft: [-.1, 0], ArrowRight: [.1, 0], ArrowUp: [0, .1], ArrowDown: [0, -.1] }[e.key];
+  if (!d) return;
+  e.preventDefault();
+  q = { x: clamp(q.x + d[0], -1.45, 1.45), y: clamp(q.y + d[1], -1.45, 1.45) };
+  drawQKV();
+});
+$('#sharp').addEventListener('input', drawQKV);
+drawQKV();
+
+/* ---------- 6: scaled dot-product attention ---------- */
+const sTok = ['the', 'cat', 'sat', 'down'];
+const Xm = [[0.9, 0.1, 0.3, 0.0], [0.2, 0.8, 0.1, 0.5], [0.1, 0.4, 0.9, 0.2], [0.0, 0.6, 0.3, 0.9]];
+const Wq = [[1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 0, 0], [0, 0, 1, 1]];
+const Wk = [[0, 1, 0, 1], [1, 0, 1, 0], [1, 0, 0, 1], [0, 1, 1, 0]];
+const Wv = [[1, 0, 0, 1], [0, 1, 1, 0], [1, 0, 1, 0], [0, 1, 0, 1]];
+const mm = (A, B) => A.map(r => B[0].map((_, j) => r.reduce((s, v, k) => s + v * B[k][j], 0)));
+const Tr = A => A[0].map((_, j) => A.map(r => r[j]));
+const Q = mm(Xm, Wq), K = mm(Xm, Wk), V = mm(Xm, Wv);
+const S = mm(Q, Tr(K)), Ss = S.map(r => r.map(v => v / 2));
+const dims = ['1', '2', '3', '4'];
+const stepNames = ['Inputs', 'Scores', 'Scale', 'Mask', 'Softmax', 'Output'];
+let stage = 0;
+function mat(title, M, rows, cols, mode) {
+  const fin = M.flat().filter(Number.isFinite), mx = Math.max(...fin.map(Math.abs)) || 1;
+  let h = `<figure class="mat"><figcaption>${title}</figcaption><table><thead><tr><th></th>${cols.map(c => `<th scope="col">${c}</th>`).join('')}</tr></thead><tbody>`;
+  M.forEach((r, i) => {
+    h += `<tr><th scope="row">${rows[i]}</th>` + r.map(v => {
+      if (!Number.isFinite(v)) return '<td class="neg-inf">−∞</td>';
+      const a = mode === 'heat' ? v * .95 : Math.abs(v) / mx * .4;
+      return `<td style="background:${heat(a, v < 0 ? 'hot' : 'accent')};color:${ink(a)}">${fmt(v)}</td>`;
+    }).join('') + '</tr>';
+  });
+  return h + '</tbody></table></figure>';
+}
+function renderAttn() {
+  const causal = $('#causal').checked;
+  const M = Ss.map((r, i) => r.map((v, j) => (causal && j > i ? -Infinity : v)));
+  const W = M.map(softmax), O = mm(W, V);
+  const texts = [
+    'Start with Q, K and V. Each is the input X times its own learned matrix: X·W<sub>Q</sub>, X·W<sub>K</sub>, X·W<sub>V</sub>. Here there are four tokens and d<sub>k</sub> = 4.',
+    'Score every query against every key with a dot product. Row i, column j answers: how relevant is token j to token i?',
+    'Divide by √d<sub>k</sub>, here 2. Dot products grow with dimension; without scaling, softmax saturates and its gradients vanish.',
+    causal
+      ? 'Add a mask M of −∞ above the diagonal so no token can see what comes after it. This is what lets a decoder train on every position of a sequence at once.'
+      : 'Masking is off, so every token can see every other token, as in an encoder like BERT. Tick “Causal mask” to see the decoder version.',
+    'Softmax turns each row into weights that are positive and sum to 1. A masked −∞ becomes exactly 0.',
+    'Multiply the weights by V. Each output row is a blend of value vectors, mixed by the weights in its row. This is the token’s new, context-aware representation.'
+  ];
+  $('#stepText').innerHTML = texts[stage];
+  $$('#formula span').forEach(s => s.classList.toggle('on', +s.dataset.st === stage));
+  let html = '';
+  if (stage === 0) html = mat('Q', Q, sTok, dims) + mat('K', K, sTok, dims) + mat('V', V, sTok, dims);
+  else if (stage === 1) html = mat('QKᵀ: rows are queries, columns are keys', S, sTok, sTok);
+  else if (stage === 2) html = mat('QKᵀ / √dₖ', Ss, sTok, sTok);
+  else if (stage === 3) html = mat(causal ? 'QKᵀ / √dₖ + M' : 'QKᵀ / √dₖ, no mask', M, sTok, sTok);
+  else if (stage === 4) html = mat('Attention weights, each row sums to 1', W, sTok, sTok, 'heat');
+  else html = mat('Weights', W, sTok, sTok, 'heat') + mat('Output = weights × V', O, sTok, dims);
+  $('#mats').innerHTML = html;
+  $$('#steps .btn').forEach((b, i) => b.setAttribute('aria-pressed', i === stage ? 'true' : 'false'));
+  $('#stepPrev').disabled = stage === 0;
+  $('#stepNext').disabled = stage === stepNames.length - 1;
+}
+$('#steps').innerHTML = stepNames.map((n, i) => `<button class="btn" type="button" data-i="${i}">${i + 1}. ${n}</button>`).join('');
+$$('#steps .btn').forEach(b => b.addEventListener('click', () => { stage = +b.dataset.i; renderAttn(); }));
+$('#stepPrev').addEventListener('click', () => { stage = Math.max(0, stage - 1); renderAttn(); });
+$('#stepNext').addEventListener('click', () => { stage = Math.min(stepNames.length - 1, stage + 1); renderAttn(); });
+$('#causal').addEventListener('change', renderAttn);
+renderAttn();
+
+/* ---------- 7: multi-head ---------- */
+const mhToks = ['The', 'chef', 'who', 'won', 'the', 'prize', 'cooked', 'dinner'];
+const fromRows = rows => (i, j) => (rows[i] && rows[i][j] !== undefined ? rows[i][j] : j === i ? .3 : .03);
+const heads = [
+  { n: 'Previous token', d: 'Each token attends to the one just before it. Heads like this appear early in many trained models and help assemble local phrases.',
+    f: (i, j) => (i === 0 ? (j === 0 ? 1 : .01) : j === i - 1 ? .8 : j === i ? .12 : .01) },
+  { n: 'Subject and verb', d: 'Verbs look back to their subjects and objects look to their verbs: “cooked” attends to “chef”, “dinner” to “cooked”.',
+    f: fromRows({ 1: { 6: .5, 3: .2 }, 3: { 2: .4, 1: .35 }, 5: { 3: .55 }, 6: { 1: .7 }, 7: { 6: .6, 1: .15 } }) },
+  { n: 'Relative clause', d: 'Ties the pieces of “who won the prize” to each other and to the noun the clause describes.',
+    f: fromRows({ 1: { 2: .45, 3: .2 }, 2: { 1: .7 }, 3: { 2: .5, 5: .2 }, 4: { 5: .6 }, 5: { 3: .45, 2: .2 }, 6: { 1: .3, 5: .15 } }) },
+  { n: 'Broad context', d: 'Spreads attention widely with a slight preference for content words, collecting a summary of the whole sentence.',
+    f: (i, j) => ([1, 3, 5, 6, 7].includes(j) ? 2 : 1) }
+];
+let headIdx = 1;
+$('#heads').innerHTML = heads.map((h, i) => `<button class="btn" type="button" data-i="${i}">${h.n}</button>`).join('');
+$$('#heads .btn').forEach(b => b.addEventListener('click', () => { headIdx = +b.dataset.i; renderMH(); }));
+function renderMH() {
+  const h = heads[headIdx];
+  const W = mhToks.map((_, i) => { const r = mhToks.map((_, j) => h.f(i, j)); const s = r.reduce((a, b) => a + b, 0); return r.map(x => x / s); });
+  $$('#heads .btn').forEach((b, i) => b.setAttribute('aria-pressed', i === headIdx ? 'true' : 'false'));
+  let t = `<table aria-label="Attention weights for the ${h.n} head"><thead><tr><th></th>${mhToks.map(x => `<th scope="col">${x}</th>`).join('')}</tr></thead><tbody>`;
+  W.forEach((r, i) => {
+    t += `<tr><th scope="row">${mhToks[i]}</th>` + r.map((v, j) => `<td data-i="${i}" data-j="${j}" style="background:${heat(Math.min(1, v * 1.4))}" title="${mhToks[i]} → ${mhToks[j]}: ${Math.round(v * 100)}%"></td>`).join('') + '</tr>';
+  });
+  $('#mhGrid').innerHTML = t + '</tbody></table>';
+  $('#mhRead').textContent = h.d + ' Hover a cell for its weight; rows are the reading token.';
+  $$('#mhGrid td').forEach(td => {
+    td.addEventListener('mouseenter', () => {
+      const i = +td.dataset.i, j = +td.dataset.j;
+      $$('#mhGrid .hl').forEach(e => e.classList.remove('hl'));
+      td.classList.add('hl');
+      $('#mhRead').textContent = `“${mhToks[i]}” → “${mhToks[j]}”: ${Math.round(W[i][j] * 100)}% of its attention in the ${h.n.toLowerCase()} head.`;
+    });
+  });
+}
+renderMH();
+
+/* ---------- 8: block diagram ---------- */
+const parts = {
+  embed: ['Token embedding', 'Looks up a learned vector for each token ID, turning n IDs into an n × d<sub>model</sub> matrix. Many models reuse the same matrix, transposed, as the output layer.'],
+  pos: ['Positional information', 'Adds word order. The original model added fixed sinusoids; others learn a vector per position; most recent LLMs use rotary embeddings, applied to queries and keys inside attention.'],
+  attn: ['Multi-head self-attention', 'The only place where tokens exchange information. Each token gathers from the others according to its attention weights. Its cost grows with the square of the sequence length.'],
+  norm1: ['Add & norm', 'Adds the sublayer’s input back to its output, forming the residual stream, then normalizes. The 2017 paper normalized after the addition; most modern models normalize before each sublayer (pre-norm), which trains more stably in deep stacks.'],
+  ffn: ['Feed-forward network', 'Two linear layers with a nonlinearity such as GELU or SwiGLU, usually widening to 4 × d<sub>model</sub> in between. It runs on each token independently, holds about two thirds of a block’s parameters, and is thought to store much of a model’s factual knowledge.'],
+  norm2: ['Add & norm', 'A second residual connection, around the feed-forward network. Because each sublayer only adds to the residual stream, information from early layers can pass straight through to later ones.'],
+  stack: ['× N layers', 'The block repeats: 12 times in BERT‑base and GPT‑2 small, 96 in GPT‑3. Each layer refines every token’s vector with context gathered by the layers below it.'],
+  out: ['Linear + softmax', 'A final linear layer projects each vector to one score (a logit) per vocabulary entry, and softmax turns those scores into a probability distribution over the next token.']
+};
+function setPart(k) {
+  $$('#diagram .part').forEach(b => b.setAttribute('aria-pressed', b.dataset.part === k ? 'true' : 'false'));
+  $('#detail').innerHTML = `<h3>${parts[k][0].replace('&', '&amp;')}</h3><p>${parts[k][1]}</p>`;
+}
+$$('#diagram .part').forEach(b => b.addEventListener('click', () => setPart(b.dataset.part)));
+setPart('attn');
+
+/* ---------- 9: families ---------- */
+const grid = (rule, cap) => `<figure class="mask-fig"><div class="mask" aria-hidden="true">${Array.from({ length: 36 }, (_, k) => `<span class="${rule(Math.floor(k / 6), k % 6) ? 'on' : ''}"></span>`).join('')}</div><figcaption>${cap}</figcaption></figure>`;
+const full = () => true, causalR = (i, j) => j <= i;
+const fams = [
+  { n: 'Encoder-only', g: () => grid(full, 'Self-attention: every token sees all others'),
+    t: 'Every token sees the whole input in both directions. These models are trained by hiding random tokens and predicting them, and they shine at understanding tasks: classification, search and retrieval, entity extraction. Examples: BERT, RoBERTa, DeBERTa.' },
+  { n: 'Decoder-only', g: () => grid(causalR, 'Causal self-attention: each token sees itself and the past'),
+    t: 'Each token sees only itself and what came before. Trained to predict the next token, so the same model can generate text. This is the design behind GPT, Llama, Mistral and most of today’s chat models.' },
+  { n: 'Encoder–decoder', g: () => grid(full, 'Encoder self-attention over the input') + grid(causalR, 'Decoder self-attention over the output so far') + grid(full, 'Cross-attention: output queries, input keys'),
+    t: 'An encoder reads the input bidirectionally; a decoder writes the output causally and reads the encoder’s states through cross-attention. This is the original 2017 translation model, and also T5, BART and Whisper.' }
+];
+let famIdx = 1;
+$('#famTabs').innerHTML = fams.map((f, i) => `<button class="btn" type="button" data-i="${i}">${f.n}</button>`).join('');
+$$('#famTabs .btn').forEach(b => b.addEventListener('click', () => { famIdx = +b.dataset.i; renderFam(); }));
+function renderFam() {
+  $$('#famTabs .btn').forEach((b, i) => b.setAttribute('aria-pressed', i === famIdx ? 'true' : 'false'));
+  $('#famGrids').innerHTML = fams[famIdx].g();
+  $('#famText').innerHTML = `<p>${fams[famIdx].t}</p>`;
+}
+renderFam();
+
+/* ---------- 10: cost ---------- */
+const L = 32, H = 32, Dm = 4096, Pn = 7e9, GPU = 80e9;
+const bytes = b => { const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (b >= 1000 && i < u.length - 1) { b /= 1000; i++; } return (b >= 100 ? b.toFixed(0) : b >= 10 ? b.toFixed(1) : b.toFixed(2)) + ' ' + u[i]; };
+function setMeter(id, noteId, v) {
+  const el = $(id), r = v / GPU;
+  el.style.width = Math.min(100, Math.max(0.6, r * 100)) + '%';
+  el.classList.toggle('over', r > 1);
+  if (noteId) $(noteId).textContent = r > 1 ? `More than an 80 GB GPU can hold, ${(r).toFixed(r > 10 ? 0 : 1)}× over.` : `${(r * 100).toFixed(r < .01 ? 2 : 1)}% of an 80 GB GPU.`;
+}
+function renderCost() {
+  const n = 2 ** +$('#lenSlider').value;
+  $('#lenOut').textContent = n.toLocaleString('en-US') + ' tokens';
+  const score = n * n * H * 2, kv = n * 2 * L * Dm * 2;
+  const att = 4 * n * n * Dm * L, lin = 2 * n * Pn, share = att / (att + lin);
+  $('#mScore').textContent = bytes(score); setMeter('#bScore', '#nScore', score);
+  $('#mKV').textContent = bytes(kv); setMeter('#bKV', '#nKV', kv);
+  $('#mFlop').textContent = Math.round(share * 100) + '%';
+  $('#bFlop').style.width = (share * 100).toFixed(1) + '%';
+}
+$('#lenSlider').addEventListener('input', renderCost);
+renderCost();
+
+/* ---------- 11: sampling ---------- */
+const vocab = [['mat', 3.1], ['floor', 2.4], ['couch', 2.0], ['rug', 1.7], ['windowsill', 1.5], ['roof', 1.0], ['keyboard', 0.9], ['moon', -0.6]];
+let counts = vocab.map(() => 0);
+function probs() {
+  const T = +$('#temp').value, k = +$('#topk').value;
+  const p = softmax(vocab.map(([, l], i) => (i < k ? l / T : -Infinity)));
+  return p;
+}
+function renderSamp() {
+  const T = +$('#temp').value, k = +$('#topk').value, p = probs();
+  $('#tempOut').textContent = T.toFixed(2); $('#topkOut').textContent = k;
+  const total = counts.reduce((a, b) => a + b, 0);
+  $('#sampBars').innerHTML = `<div class="bar samp tokhead"><span>Token</span><span>Probability</span><span class="v">p</span><span class="cnt" title="Times drawn">drawn</span></div>` +
+    vocab.map(([w], i) => `<div class="bar samp${i >= k ? ' off' : ''}"><span>${w}</span><span class="track"><span class="fill" style="display:block;width:${(p[i] * 100).toFixed(1)}%;background:var(--accent)"></span></span><span class="v">${(p[i] * 100).toFixed(p[i] < .1 && p[i] > 0 ? 1 : 0)}%</span><span class="cnt">${total ? counts[i] : ''}</span></div>`).join('');
+}
+function draw(n) {
+  const p = probs(); let last = 0;
+  for (let s = 0; s < n; s++) {
+    let r = Math.random(), i = 0;
+    while (i < p.length - 1 && r >= p[i]) { r -= p[i]; i++; }
+    if (p[i] === 0) i = p.findIndex(x => x > 0);
+    counts[i]++; last = i;
+  }
+  $('#sampleWord').textContent = vocab[last][0];
+  renderSamp();
+}
+function clearCounts() { counts = vocab.map(() => 0); $('#sampleWord').textContent = '…'; renderSamp(); }
+$('#temp').addEventListener('input', clearCounts);
+$('#topk').addEventListener('input', clearCounts);
+$('#draw1').addEventListener('click', () => draw(1));
+$('#draw100').addEventListener('click', () => draw(100));
+$('#drawClear').addEventListener('click', clearCounts);
+renderSamp();
+
+fromHash();
+})();
+</script>
+</body>
+</html>
